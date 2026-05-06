@@ -1,0 +1,454 @@
+# 🚆 ATTCS — AI Train Traffic Control System
+## Complete Project Analysis
+
+---
+
+## 1. Project Overview
+
+**ATTCS** is a **real-time AI-powered train traffic control simulation** built as a monolithic Java Spring Boot application with a rich single-page frontend. It simulates a railway network across **12 Indian cities** with **24 active trains**, **48 signals**, and **18 route segments**, all managed by four AI engines running natively in Java.
+
+> [!IMPORTANT]
+> This was originally a Python + Java microservice architecture. All AI logic has been **migrated to pure Java**, making it a self-contained, single-process application.
+
+---
+
+## 2. Technology Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| **Framework** | Spring Boot | 3.2.5 |
+| **Language** | Java | 17 |
+| **Build Tool** | Maven | 3.9.6 |
+| **Template Engine** | Thymeleaf | (via starter) |
+| **Database** | H2 (in-memory) | Runtime |
+| **ORM** | Spring Data JPA / Hibernate | (via starter) |
+| **Frontend** | Vanilla HTML + CSS + JS | — |
+| **Fonts** | Inter + JetBrains Mono | Google Fonts |
+| **JSON** | Jackson | (via starter-web) |
+| **Boilerplate** | Lombok | Optional |
+
+---
+
+## 3. Project Structure
+
+```
+AI(ATTCS)/
+├── pom.xml                          # Maven config
+├── src/main/
+│   ├── java/com/attcs/
+│   │   ├── AttcsApplication.java    # Entry point (@SpringBootApplication + @EnableScheduling)
+│   │   ├── config/
+│   │   │   └── WebConfig.java       # CORS configuration
+│   │   ├── model/                   # 9 domain entities
+│   │   │   ├── Train.java           # JPA @Entity — active train
+│   │   │   ├── Signal.java          # JPA @Entity — railway signal
+│   │   │   ├── Station.java         # POJO — station node
+│   │   │   ├── Route.java           # POJO — route segment
+│   │   │   ├── Alert.java           # POJO — AI alert
+│   │   │   ├── Prediction.java      # POJO — AI prediction
+│   │   │   ├── DispatchItem.java    # POJO — dispatch queue item
+│   │   │   ├── MaintenanceItem.java # POJO — maintenance schedule
+│   │   │   └── CapacitySegment.java # POJO — capacity utilization
+│   │   ├── repository/              # 2 JPA repositories
+│   │   │   ├── TrainRepository.java
+│   │   │   └── SignalRepository.java
+│   │   ├── service/                 # 9 service classes (including 4 AI engines)
+│   │   │   ├── NetworkService.java       # Static topology (stations + routes)
+│   │   │   ├── TrainService.java         # Train lifecycle + scheduled updates
+│   │   │   ├── SignalService.java        # Signal state management
+│   │   │   ├── TrafficAI.java            # DFS deadlock detection algorithm
+│   │   │   ├── AiOptimizerService.java   # BFS pathfinding + multi-objective scoring
+│   │   │   ├── AiPredictorService.java   # Probabilistic delay/weather prediction
+│   │   │   ├── AiDispatcherService.java  # Priority-based dispatch decisions
+│   │   │   ├── AiReschedulerService.java # Delay recovery + rescheduling
+│   │   │   └── AiProxyService.java       # Facade routing to AI services
+│   │   └── controller/             # 8 REST/web controllers
+│   │       ├── WebController.java        # GET / → index.html
+│   │       ├── DashboardController.java  # GET /api/dashboard
+│   │       ├── TrainController.java      # GET /api/trains
+│   │       ├── SignalController.java     # GET/POST /api/signals
+│   │       ├── RouteController.java      # POST /api/routes/optimize
+│   │       ├── DispatchController.java   # GET /api/dispatch
+│   │       ├── PredictionController.java # GET /api/predictions
+│   │       └── MaintenanceController.java# GET /api/maintenance, /rescheduling, /capacity
+│   └── resources/
+│       ├── application.properties   # Server port 8080, H2 config, logging
+│       ├── templates/
+│       │   └── index.html           # Single-page Thymeleaf template (612 lines)
+│       └── static/
+│           ├── app.js               # Frontend application logic (1677 lines)
+│           └── styles.css           # Design system + all styles (2301 lines)
+```
+
+---
+
+## 4. Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (Browser)"]
+        HTML["index.html (Thymeleaf SPA)"]
+        JS["app.js (1677 lines)"]
+        CSS["styles.css (2301 lines)"]
+        Canvas["HTML5 Canvas (Network Map)"]
+    end
+
+    subgraph Controllers["REST Controllers"]
+        WC["WebController"]
+        DC["DashboardController"]
+        TC["TrainController"]
+        SC["SignalController"]
+        RC["RouteController"]
+        DiC["DispatchController"]
+        PC["PredictionController"]
+        MC["MaintenanceController"]
+    end
+
+    subgraph Services["Service Layer"]
+        NS["NetworkService"]
+        TS["TrainService"]
+        SS["SignalService"]
+        APS["AiProxyService (Facade)"]
+    end
+
+    subgraph AI["AI Engines (Pure Java)"]
+        TAI["TrafficAI (DFS Deadlock)"]
+        AO["AiOptimizerService (BFS)"]
+        AP["AiPredictorService"]
+        AD["AiDispatcherService"]
+        AR["AiReschedulerService"]
+    end
+
+    subgraph Data["Data Layer"]
+        TR["TrainRepository (JPA)"]
+        SR["SignalRepository (JPA)"]
+        H2["H2 In-Memory DB"]
+    end
+
+    HTML --> JS
+    JS -->|"fetch('/api/*')"| Controllers
+    WC -->|"renders"| HTML
+    DC --> TS & NS & AD
+    TC --> TS
+    SC --> SS
+    RC --> APS
+    DiC --> AD
+    PC --> AP
+    APS --> AO & AP & AD & AR
+    TS --> NS & TR
+    SS --> NS & SR
+    TR --> H2
+    SR --> H2
+```
+
+---
+
+## 5. Detailed File Analysis
+
+### 5.1 Entry Point — [AttcsApplication.java](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/AttcsApplication.java)
+
+- `@SpringBootApplication` — enables auto-configuration, component scanning, config
+- `@EnableScheduling` — **critical**: enables `@Scheduled` annotations used by `TrainService` (100ms position updates) and `SignalService` (5s signal changes)
+- Prints a startup banner with the server URL
+
+### 5.2 Configuration — [WebConfig.java](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/config/WebConfig.java)
+
+- Implements `WebMvcConfigurer` to configure CORS
+- Allows all origins (`*`) on `/api/**` endpoints
+- Supports GET, POST, PUT, DELETE, OPTIONS methods
+
+### 5.3 Model Layer (9 classes)
+
+#### JPA Entities (persisted to H2):
+
+| Entity | Key Fields | Purpose |
+|--------|-----------|---------|
+| **Train** | id (auto), name, type (ice/ic/re), route, fromId, toId, progress (0-1), status, speed, delay, x, y, nextStation, eta, departTime | Active train with live position |
+| **Signal** | id (String PK like "SIG-001"), segment (e.g. "DEL-BOM"), state (green/yellow/red/blue) | Railway signal with 4 states |
+
+#### POJOs (in-memory only):
+
+| POJO | Key Fields | Purpose |
+|------|-----------|---------|
+| **Station** | id, name, x (0-1), y (0-1) | Network node with normalized map coordinates |
+| **Route** | from, to, type, distance (km) | Segment connecting two stations |
+| **Alert** | id, type, badgeLabel, title, desc, time, action | AI-generated alert notification |
+| **Prediction** | type, typeLabel, confidence (%), title, desc, level, pct | AI prediction with confidence score |
+| **DispatchItem** | train, detail, priority (high/medium/low), status | Dispatch queue entry |
+| **MaintenanceItem** | title, desc, date, status, type | Maintenance schedule entry |
+| **CapacitySegment** | name, usage (0-100%) | Track/station utilization metric |
+
+### 5.4 Repository Layer
+
+- [TrainRepository](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/repository/TrainRepository.java) — `JpaRepository<Train, Long>` — auto-generated CRUD for trains
+- [SignalRepository](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/repository/SignalRepository.java) — `JpaRepository<Signal, String>` — CRUD for signals (String ID)
+
+### 5.5 Service Layer (9 classes)
+
+#### [NetworkService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/NetworkService.java) — Static Network Topology
+- `@PostConstruct init()` initializes **12 stations** and **18 routes**
+- Stations: New Delhi, Mumbai, Chennai, Hyderabad, Bengaluru, Kolkata, Ahmedabad, Pune, Jaipur, Lucknow, Surat, Nagpur
+- Each station has normalized (x, y) coordinates for map rendering
+- Routes have types: `ice` (high-speed), `ic` (intercity), `re` (regional)
+- Provides `findStation()` and `findRoute()` lookups
+
+#### [TrainService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/TrainService.java) — Train Lifecycle Manager
+- **`@PostConstruct`**: Generates 24 trains with random positions, speeds, and statuses
+- **`@Scheduled(fixedRate = 100)`** `updateTrainPositions()`: Moves all non-stopped trains along their routes at 100ms intervals. When a train reaches `progress >= 1.0`, it gets assigned a new random route
+- **`@Scheduled(fixedRate = 3000)`** `updateStats()`: Randomizes dashboard stats (active count ~284, on-time rate ~90%, etc.)
+- Speed calculation: `(speed/300) * 0.003 * randomFactor` — normalized movement per tick
+- Position interpolation: `x = from.x + (to.x - from.x) * progress`
+
+#### [SignalService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/SignalService.java) — Signal State Manager
+- `@PostConstruct`: Creates 48 signals distributed across routes with weighted initial states (60% green, 20% yellow, 10% red, 10% blue)
+- **`@Scheduled(fixedRate = 5000)`**: Randomly changes one signal's state every 5 seconds
+- `changeSignalState()`: Allows manual signal override via API
+- `getStats()`: Counts signals per state for dashboard display
+
+#### [TrafficAI](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/TrafficAI.java) — Deadlock Detection (DFS Algorithm)
+
+> [!NOTE]
+> This is the most algorithmically significant class in the project.
+
+**Algorithm**: Builds a **wait-for graph** and uses **Depth-First Search (DFS)** to detect circular waits (deadlocks):
+
+1. **Graph Construction**: Each station is a node. An edge `A → B` exists when a train at station A is waiting to move to station B
+2. **Cycle Detection**: DFS traversal with a recursion stack. If a neighbor is already in the recursion stack, a cycle (deadlock) is detected
+3. **Resolution**: The lowest-priority train in the cycle is selected for rerouting (priority: ICE=3 > IC=2 > RE=1)
+4. Uses a `TrainEdge` inner class to track which train owns each edge
+
+#### [AiOptimizerService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/AiOptimizerService.java) — Route Optimizer (BFS + Multi-Objective Scoring)
+
+**Algorithm**: Multi-objective BFS pathfinding:
+
+1. **Graph Building** (`@PostConstruct`): Converts routes into a bidirectional adjacency list
+2. **BFS Pathfinding** (`findAllPaths`): Finds up to 10 acyclic paths with max 6 hops using breadth-first search
+3. **Multi-Objective Scoring** (`scorePath`): Each path is scored based on the selected priority:
+   - `fastest` → `1000 - totalTimeMin * 3.0`
+   - `energy` → `1000 - totalEnergy * 2`
+   - `capacity` → `1000 - capacity * 5.0`
+   - `conflict` → `1000 - conflicts * 100.0`
+4. **Speed profiles**: ICE=280 km/h, IC=200 km/h, RE=120 km/h
+5. **Energy profiles**: ICE=0.80 kWh/km, IC=0.55 kWh/km, RE=0.35 kWh/km
+6. Returns top 3 routes with metadata (duration, distance, stops, energy, AI score)
+7. Falls back to hardcoded routes if no path is found
+
+#### [AiPredictorService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/AiPredictorService.java) — Probabilistic Predictor
+
+Generates 6 predictions per call using pattern-based analysis:
+
+1. **Delay predictions** (×2): Uses per-station historical delay risk factors (Kolkata=0.35, Hyderabad=0.30, etc.) multiplied by a time-of-day factor
+2. **Congestion prediction**: Models corridor congestion with time-based risk
+3. **Weather prediction**: Randomly selects from 4 weather scenarios (storms, fog, wind, ice)
+4. **Maintenance prediction**: Sensor-based track wear detection
+5. **Platform overload**: Capacity threshold prediction
+
+**Time-based risk factor**: Peak hours (7-9, 16-19) → 1.4x, Normal (10-15) → 1.0x, Off-peak → 0.6x
+
+**Confidence calculation**: Uses Gaussian-noise approximation with data-point scaling
+
+#### [AiDispatcherService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/AiDispatcherService.java) — Dispatch Decision Engine
+
+- Manages a queue of 7 trains with priority levels (high/medium/low)
+- Generates real-time dispatch decisions with actions like "Cleared for departure", "Rerouted via alternate corridor", etc.
+- Sorts decisions by priority (high first)
+- Generates a timestamped decision log with 8 recent AI actions
+- Status assignment is priority-weighted: high→dispatched/processing, medium→processing/queued, low→queued/dispatched
+
+#### [AiReschedulerService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/AiReschedulerService.java) — Rescheduling Engine
+
+- Generates 7 rescheduling items with AI actions (rerouting, platform swap, connection hold, priority boost, etc.)
+- Calculates aggregate stats: total delay saved, cascade delays prevented, AI confidence (90-98%), manual overrides
+- Each item tracks `delay_saved` internally for statistics computation
+
+#### [AiProxyService](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/java/com/attcs/service/AiProxyService.java) — Service Facade
+
+- **Design Pattern**: Facade — single entry point routing to all 4 AI engines
+- Originally proxied HTTP calls to a Python microservice; now delegates to native Java services
+- Methods: `optimizeRoute()`, `getPredictions()`, `getDispatchDecisions()`, `getRescheduling()`
+
+### 5.6 Controller Layer (8 classes)
+
+| Controller | Endpoint(s) | Method | Description |
+|-----------|-------------|--------|-------------|
+| **WebController** | `GET /` | Thymeleaf | Serves `index.html` |
+| **DashboardController** | `GET /api/dashboard` | REST | Full dashboard payload (stats, stations, routes, alerts, board trains, AI actions) |
+| | `GET /api/dashboard/stats` | REST | Live stats only |
+| **TrainController** | `GET /api/trains` | REST | All trains with positions |
+| | `GET /api/trains/{id}` | REST | Single train detail |
+| **SignalController** | `GET /api/signals` | REST | All signals + statistics |
+| | `POST /api/signals/{id}/change` | REST | Change signal state |
+| **RouteController** | `POST /api/routes/optimize` | REST | AI route optimization |
+| **DispatchController** | `GET /api/dispatch` | REST | Dispatch queue + decision log |
+| **PredictionController** | `GET /api/predictions` | REST | AI predictions |
+| **MaintenanceController** | `GET /api/maintenance` | REST | Maintenance schedule (8 items) |
+| | `GET /api/rescheduling` | REST | Rescheduling data + stats |
+| | `GET /api/capacity` | REST | Capacity segments + 24hr chart data |
+
+### 5.7 Frontend
+
+#### [index.html](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/resources/templates/index.html) — 612 lines
+
+A single-page application with **10 navigable pages**:
+
+1. **Network Command** (Dashboard) — Map canvas, stats bar, alerts, train board, AI actions
+2. **Train Positions** — Searchable/filterable train table with "Track" buttons
+3. **Signal Grid** — 48 signal cards with visual bulb indicators + legend
+4. **Route Optimizer** — Form (origin, destination, priority) + results panel
+5. **AI Dispatch** — Dispatch queue + AI decision log with auto-dispatch toggle
+6. **Predictions** — AI prediction cards with confidence bars
+7. **Rescheduling** — Timeline + rescheduling statistics
+8. **Signal Control** — Clickable signal inspector with state change capability
+9. **Capacity Planning** — 24hr utilization chart (Canvas) + capacity meters
+10. **Maintenance** — Maintenance schedule cards
+
+Also includes a **Live Train Tracker Overlay** with speed gauge canvas, route map, route progress timeline, and delay information.
+
+#### [app.js](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/resources/static/app.js) — 1677 lines
+
+- **Dual-mode data**: Has local fallback data arrays + `fetch('/api/*')` calls to the Java backend
+- **Network Map Rendering**: HTML5 Canvas with curved bezier routes, glowing neon signals, station indicators with labels, animated train markers
+- **Live Updates**: `setInterval` for train position updates, stat refreshes, signal state polling
+- **Train Tracker**: Full-screen overlay with speed gauge (canvas arc rendering), route progress timeline, live stats
+- **Route Optimizer UI**: Form submission → `POST /api/routes/optimize` → renders route cards
+- **Signal Control UI**: Clickable signals → inspector panel → state change via `POST /api/signals/{id}/change`
+- **Capacity Chart**: Canvas-based 24hr utilization line chart with gradient fill
+- **Toast Notifications**: Stackable toast system for user feedback
+
+#### [styles.css](file:///c:/Users/SILLA%20ROHAN%20KUMAR/Downloads/AI%28ATTCS%29/src/main/resources/static/styles.css) — 2301 lines
+
+- **Design System**: 35+ CSS custom properties (dark theme, accent colors, typography, spacing)
+- **Color Palette**: Deep navy backgrounds (#0a0e17), purple accent (#6C5CE7), cyan (#00CFFD), green (#00E676), orange (#FF9100), red (#FF5252)
+- **Typography**: Inter (UI) + JetBrains Mono (data/monospace)
+- **Glassmorphism**: `backdrop-filter: blur(12px)` on card components
+- **Animations**: `pulse-badge`, `ai-pulse`, `live-blink`, `action-glow`, signal glow effects
+- **Responsive**: Media queries for mobile (≤900px) with collapsible sidebar
+- **Components**: Sidebar nav, alert cards, train board table, signal grid, dispatch queue, prediction cards, capacity meters, maintenance cards, tracker overlay, toast notifications
+
+---
+
+## 6. Data Flow
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Controller
+    participant Service
+    participant AI
+    participant H2
+
+    Note over Browser: Page loads → DOMContentLoaded
+    Browser->>Controller: GET /api/dashboard
+    Controller->>Service: trainService.getActiveCount()
+    Service->>H2: TrainRepository.findAll()
+    H2-->>Service: List<Train>
+    Controller->>Service: networkService.getStations()
+    Controller-->>Browser: JSON {stats, stations, routes, alerts, aiActions}
+
+    loop Every 100ms
+        Service->>H2: Update train positions
+        Note over Service: TrainService.updateTrainPositions()
+    end
+
+    loop Every 2 seconds (JS)
+        Browser->>Controller: GET /api/trains
+        Controller->>Service: trainService.getAllTrains()
+        Service->>H2: findAll()
+        H2-->>Browser: JSON [trains...]
+        Note over Browser: Redraw canvas map
+    end
+
+    Browser->>Controller: POST /api/routes/optimize
+    Controller->>AI: AiOptimizerService.optimize()
+    Note over AI: BFS pathfinding + scoring
+    AI-->>Browser: JSON {routes: [top 3]}
+```
+
+---
+
+## 7. AI Algorithms Summary
+
+| AI Engine | Algorithm | Complexity | Key Technique |
+|-----------|----------|------------|---------------|
+| **TrafficAI** | DFS Cycle Detection | O(V+E) | Wait-for graph → cycle = deadlock → reroute lowest-priority train |
+| **AiOptimizer** | BFS Pathfinding | O(V!) worst | Multi-objective scoring (time/energy/capacity/conflict) |
+| **AiPredictor** | Probabilistic Scoring | O(1) | Station risk factors × time-of-day multiplier + Gaussian noise |
+| **AiDispatcher** | Priority Queue | O(n log n) | Sort by priority (high→low), status weighted by priority tier |
+| **AiRescheduler** | Heuristic | O(n) | Pre-defined rescheduling scenarios with dynamic stats |
+
+---
+
+## 8. Key Design Patterns
+
+| Pattern | Where Used |
+|---------|-----------|
+| **MVC** | Controllers → Services → Repositories |
+| **Facade** | `AiProxyService` wraps all 4 AI engines |
+| **Repository** | Spring Data JPA auto-implemented repositories |
+| **Scheduler** | `@Scheduled` for real-time train/signal simulation |
+| **Graceful Degradation** | Frontend has local fallback data when API is unreachable |
+| **Builder-like Init** | `@PostConstruct` methods build initial state |
+
+---
+
+## 9. Network Topology
+
+12 stations connected by 18 bidirectional routes:
+
+```
+                    Nagpur ──(re)── Surat
+                      │               │
+                   (ic)              (ic)
+                      │               │
+    Lucknow ──(re)── Pune        Bengaluru
+        │              │            │    │
+       (ic)          (ice)       (ice) (ice)
+        │              │            │    │
+    New Delhi ──────── ┤        Kolkata  Hyderabad
+     │    │           (ice)      │  │      │    │
+   (ice)(ice)          │       (ice)(ic) (ice)(ice)
+     │    │            │         │   │     │    │
+   Mumbai Kolkata    Jaipur      │  Pune  Ahme- Jaipur
+              │       │   │      │        dabad   │
+            (ice)   (ice)(ic)    │         │    (ice)
+              │       │   │      │       (ice)    │
+           Hyderabad Chennai Pune       Chennai Chennai
+```
+
+---
+
+## 10. How to Run
+
+```bash
+# Navigate to project directory
+cd "c:\Users\SILLA ROHAN KUMAR\Downloads\AI(ATTCS)"
+
+# Build and run with Maven
+.\apache-maven-3.9.6\bin\mvn spring-boot:run
+
+# Access the application
+# Open browser → http://localhost:8080
+```
+
+> [!TIP]
+> The H2 console is available at `http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:mem:testdb`, username: `sa`, no password) for inspecting the in-memory database.
+
+---
+
+## 11. File Size Summary
+
+| File | Lines | Size |
+|------|-------|------|
+| app.js | 1,677 | 71 KB |
+| styles.css | 2,301 | 55 KB |
+| index.html | 612 | 36 KB |
+| AiOptimizerService.java | 267 | 12 KB |
+| AiPredictorService.java | 165 | 8 KB |
+| TrainService.java | 170 | 6 KB |
+| DashboardController.java | 126 | 6 KB |
+| TrafficAI.java | 165 | 6 KB |
+| AiDispatcherService.java | 102 | 5 KB |
+| MaintenanceController.java | 100 | 5 KB |
+| **Total Backend Java** | **~1,100** | **~50 KB** |
+| **Total Frontend** | **~4,590** | **~162 KB** |
+| **Grand Total** | **~5,690** | **~212 KB** |
